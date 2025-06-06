@@ -30,7 +30,7 @@ def summarize_dataset(dataset):
     return summaries
 
 def gaussian_probability(x, mean, var):
-    var = max(var, 1e-9)  # smoothing supaya variance tidak nol
+    var = max(var, 1e-9)
     exponent = math.exp(-((x - mean) ** 2) / (2 * var))
     return (1 / math.sqrt(2 * math.pi * var)) * exponent
 
@@ -50,17 +50,18 @@ def predict(summaries, separated_train, row):
     probabilities = calculate_class_probabilities(summaries, separated_train, row)
     return max(probabilities, key=probabilities.get)
 
-def get_predictions(summaries, separated_train, test_data):
-    return [predict(summaries, separated_train, row[:-1]) for row in test_data]
-
 # ===================== Evaluasi =====================
 def confusion_elements(y_true, y_pred):
     tp = tn = fp = fn = 0
     for yt, yp in zip(y_true, y_pred):
-        if yt == 1 and yp == 1: tp += 1
-        elif yt == 0 and yp == 0: tn += 1
-        elif yt == 0 and yp == 1: fp += 1
-        elif yt == 1 and yp == 0: fn += 1
+        if yt == 1 and yp == 1:
+            tp += 1
+        elif yt == 0 and yp == 0:
+            tn += 1
+        elif yt == 0 and yp == 1:
+            fp += 1
+        elif yt == 1 and yp == 0:
+            fn += 1
     return tp, tn, fp, fn
 
 def compute_metrics(y_true, y_pred):
@@ -72,11 +73,28 @@ def compute_metrics(y_true, y_pred):
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0
     return accuracy, specificity, precision, f1
 
+# ===================== Leave-One-Out Cross Validation =====================
+def loo_cross_validation(data):
+    n = len(data)
+    y_true_all = []
+    y_pred_all = []
+    for i in range(n):
+        train = data[:i] + data[i+1:]
+        test = data[i]
+
+        separated_train = separate_by_class(train)
+        summaries = {cls: summarize_dataset(rows) for cls, rows in separated_train.items()}
+        prediction = predict(summaries, separated_train, test[:-1])
+
+        y_true_all.append(int(test[-1]))
+        y_pred_all.append(prediction)
+    return y_true_all, y_pred_all
+
 # ===================== Input Data Baru =====================
 def input_user_data(headers):
     print("\nMasukkan data baru untuk prediksi:")
     input_values = []
-    for feature in headers[:-1]:  # exclude label
+    for feature in headers[:-1]:
         while True:
             try:
                 val = float(input(f"{feature}: "))
@@ -86,59 +104,56 @@ def input_user_data(headers):
                 print("Input harus berupa angka.")
     return input_values
 
-# ===================== Main Program =====================
+# ===================== Main =====================
 def main():
     train_data, headers = read_csv('train_data.csv')
+    val_data, _ = read_csv('val_data.csv')
     test_data, _ = read_csv('test_data.csv')
 
-    # Training
+    # === EVALUASI DATA TRAIN ===
+    print("=== Evaluasi Data Train ===")
     separated_train = separate_by_class(train_data)
     summaries = {cls: summarize_dataset(rows) for cls, rows in separated_train.items()}
+    y_true_train = [int(row[-1]) for row in train_data]
+    y_pred_train = [predict(summaries, separated_train, row[:-1]) for row in train_data]
+    acc, spec, prec, f1 = compute_metrics(y_true_train, y_pred_train)
+    tp, tn, fp, fn = confusion_elements(y_true_train, y_pred_train)
+    print(f"Accuracy    : {acc:.4f}")
+    print(f"Specificity : {spec:.4f}")
+    print(f"Precision   : {prec:.4f}")
+    print(f"F1-Score    : {f1:.4f}")
+    print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
 
-    # Evaluasi data latih dan uji
-    y_train_true = [int(row[-1]) for row in train_data]
-    y_test_true = [int(row[-1]) for row in test_data]
-    y_train_pred = get_predictions(summaries, separated_train, train_data)
-    y_test_pred = get_predictions(summaries, separated_train, test_data)
-
-    train_metrics = compute_metrics(y_train_true, y_train_pred)
-    test_metrics = compute_metrics(y_test_true, y_test_pred)
-
-    # Hitung confusion matrix untuk data latih
-    tp_train, tn_train, fp_train, fn_train = confusion_elements(y_train_true, y_train_pred)
-
-    # Hitung confusion matrix untuk data uji
-    tp_test, tn_test, fp_test, fn_test = confusion_elements(y_test_true, y_test_pred)
-
-    # Tampilkan hasil evaluasi data latih dengan confusion matrix
-    print("=== Evaluasi Data Latih ===")
-    print(f"Accuracy    : {train_metrics[0]:.4f}")
-    print(f"Specificity : {train_metrics[1]:.4f}")
-    print(f"Precision   : {train_metrics[2]:.4f}")
-    print(f"F1-Score    : {train_metrics[3]:.4f}")
-    print(f"TP: {tp_train}, TN: {tn_train}, FP: {fp_train}, FN: {fn_train}")
-
+    # === TESTING ===
     print("\n=== Evaluasi Data Uji ===")
-    print(f"Accuracy    : {test_metrics[0]:.4f}")
-    print(f"Specificity : {test_metrics[1]:.4f}")
-    print(f"Precision   : {test_metrics[2]:.4f}")
-    print(f"F1-Score    : {test_metrics[3]:.4f}")
-    print(f"TP: {tp_test}, TN: {tn_test}, FP: {fp_test}, FN: {fn_test}")
+    separated_train = separate_by_class(train_data)
+    summaries = {cls: summarize_dataset(rows) for cls, rows in separated_train.items()}
+    y_true_test = [int(row[-1]) for row in test_data]
+    y_pred_test = [predict(summaries, separated_train, row[:-1]) for row in test_data]
+    acc, spec, prec, f1 = compute_metrics(y_true_test, y_pred_test)
+    tp, tn, fp, fn = confusion_elements(y_true_test, y_pred_test)
+    print(f"Accuracy    : {acc:.4f}")
+    print(f"Specificity : {spec:.4f}")
+    print(f"Precision   : {prec:.4f}")
+    print(f"F1-Score    : {f1:.4f}")
+    print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
 
-    # Input data baru dari user
+    # === VALIDASI (LOO-CV PADA VAL DATA) ===
+    print("=== Evaluasi Validasi (LOO-CV) ===")
+    y_true_val, y_pred_val = loo_cross_validation(val_data)
+    acc, spec, prec, f1 = compute_metrics(y_true_val, y_pred_val)
+    tp, tn, fp, fn = confusion_elements(y_true_val, y_pred_val)
+    print(f"Accuracy    : {acc:.4f}")
+    print(f"Specificity : {spec:.4f}")
+    print(f"Precision   : {prec:.4f}")
+    print(f"F1-Score    : {f1:.4f}")
+    print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
+
+    # === PREDIKSI DATA BARU ===
     new_data = input_user_data(headers)
     prediction = predict(summaries, separated_train, new_data)
     print(f"\n📊 Prediksi untuk data baru: task_success = {prediction} ({'BERHASIL' if prediction == 1 else 'GAGAL'})")
-
-    # Hitung ulang prediksi dan metrik data uji tanpa menggunakan test_metrics lama
-    y_test_pred_new = get_predictions(summaries, separated_train, test_data)
-    test_metrics_new = compute_metrics(y_test_true, y_test_pred_new)
-
-    print("\n=== Evaluasi Model pada Data Uji (Setelah Prediksi) ===")
-    print(f"Accuracy    : {test_metrics_new[0]:.4f}")
-    print(f"Specificity : {test_metrics_new[1]:.4f}")
-    print(f"Precision   : {test_metrics_new[2]:.4f}")
-    print(f"F1-Score    : {test_metrics_new[3]:.4f}")
-
+    print("\n=== Program Selesai ===")
+    
 if __name__ == '__main__':
     main()
