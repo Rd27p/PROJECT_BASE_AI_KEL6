@@ -1,177 +1,144 @@
-import csv
-import sys
+import math
 
-# === Encoding ===
-def encode_gender(gender):
-    return 1 if gender.strip().lower() == 'male' else 0
+# ===================== CSV Reader =====================
+def read_csv(filename):
+    with open(filename, 'r') as file:
+        lines = file.readlines()
+        header = lines[0].strip().split(',')
+        data = []
+        for line in lines[1:]:
+            row = list(map(float, line.strip().split(',')))
+            data.append(row)
+        return data, header
 
-def encode_admission_type(admission_type):
-    types = {'urgent': 0, 'emergency': 1, 'elective': 2}
-    return types.get(admission_type.strip().lower(), -1)
+# ===================== Naive Bayes Core =====================
+def separate_by_class(data):
+    separated = {}
+    for row in data:
+        label = int(row[-1])
+        if label not in separated:
+            separated[label] = []
+        separated[label].append(row[:-1])
+    return separated
 
-# === Matrix Operations ===
-def transpose(matrix):
-    return list(map(list, zip(*matrix)))
+def summarize_dataset(dataset):
+    summaries = []
+    for column in zip(*dataset):
+        mean = sum(column) / len(column)
+        variance = sum((x - mean) ** 2 for x in column) / len(column)
+        summaries.append((mean, variance))
+    return summaries
 
-def matmul(a, b):
-    return [[sum(x * y for x, y in zip(row, col)) for col in zip(*b)] for row in a]
+def gaussian_probability(x, mean, var):
+    var = max(var, 1e-9)  # smoothing supaya variance tidak nol
+    exponent = math.exp(-((x - mean) ** 2) / (2 * var))
+    return (1 / math.sqrt(2 * math.pi * var)) * exponent
 
-def inverse_3x3(m):
-    det = (
-        m[0][0]*(m[1][1]*m[2][2] - m[1][2]*m[2][1])
-        - m[0][1]*(m[1][0]*m[2][2] - m[1][2]*m[2][0])
-        + m[0][2]*(m[1][0]*m[2][1] - m[1][1]*m[2][0])
-    )
-    if det == 0:
-        raise ValueError("Matrix is singular and cannot be inverted.")
-    inv = [[0]*3 for _ in range(3)]
+def calculate_class_probabilities(summaries, separated_train, row):
+    total_rows = sum(len(rows) for rows in separated_train.values())
+    class_priors = {cls: len(rows) / total_rows for cls, rows in separated_train.items()}
 
-    inv[0][0] =  (m[1][1]*m[2][2] - m[1][2]*m[2][1]) / det
-    inv[0][1] = -(m[0][1]*m[2][2] - m[0][2]*m[2][1]) / det
-    inv[0][2] =  (m[0][1]*m[1][2] - m[0][2]*m[1][1]) / det
+    probabilities = {}
+    for class_value, class_summaries in summaries.items():
+        probabilities[class_value] = class_priors[class_value]
+        for i in range(len(class_summaries)):
+            mean, var = class_summaries[i]
+            probabilities[class_value] *= gaussian_probability(row[i], mean, var)
+    return probabilities
 
-    inv[1][0] = -(m[1][0]*m[2][2] - m[1][2]*m[2][0]) / det
-    inv[1][1] =  (m[0][0]*m[2][2] - m[0][2]*m[2][0]) / det
-    inv[1][2] = -(m[0][0]*m[1][2] - m[0][2]*m[1][0]) / det
+def predict(summaries, separated_train, row):
+    probabilities = calculate_class_probabilities(summaries, separated_train, row)
+    return max(probabilities, key=probabilities.get)
 
-    inv[2][0] =  (m[1][0]*m[2][1] - m[1][1]*m[2][0]) / det
-    inv[2][1] = -(m[0][0]*m[2][1] - m[0][1]*m[2][0]) / det
-    inv[2][2] =  (m[0][0]*m[1][1] - m[0][1]*m[1][0]) / det
+def get_predictions(summaries, separated_train, test_data):
+    return [predict(summaries, separated_train, row[:-1]) for row in test_data]
 
-    return inv
+# ===================== Evaluasi =====================
+def confusion_elements(y_true, y_pred):
+    tp = tn = fp = fn = 0
+    for yt, yp in zip(y_true, y_pred):
+        if yt == 1 and yp == 1: tp += 1
+        elif yt == 0 and yp == 0: tn += 1
+        elif yt == 0 and yp == 1: fp += 1
+        elif yt == 1 and yp == 0: fn += 1
+    return tp, tn, fp, fn
 
-# === Load Data ===
-def load_data(filepath):
-    X, y, names, rows = [], [], [], []
-    with open(filepath, 'r') as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            try:
-                age = float(row['Age'])
-                gender = encode_gender(row['Gender'])
-                admission = encode_admission_type(row['Admission Type'])
-                billing = float(row['Billing Amount'])
-                if admission == -1:
-                    continue
-                X.append([1.0, age, gender, admission])
-                y.append(billing)
-                names.append(row['Name'])
-                rows.append(row)
-            except:
-                continue
-    return X, y, names, rows
-
-# === Linear Regression ===
-def linear_regression_fit(X, y):
-    X_T = transpose(X)
-    XTX = matmul(X_T, X)
-    XTy = matmul(X_T, [[val] for val in y])
-    XTX_inv = inverse_3x3(XTX)
-    theta = matmul(XTX_inv, XTy)
-    return [t[0] for t in theta]
-
-def predict(X, theta):
-    return [sum(x_i * t_i for x_i, t_i in zip(x, theta)) for x in X]
-
-# === Evaluation ===
-def evaluate_classification(y_true, y_pred, threshold):
-    TP = TN = FP = FN = 0
-    for actual, pred in zip(y_true, y_pred):
-        actual_class = 1 if actual > threshold else 0
-        predicted_class = 1 if pred > threshold else 0
-        if predicted_class == 1 and actual_class == 1: TP += 1
-        elif predicted_class == 0 and actual_class == 0: TN += 1
-        elif predicted_class == 1 and actual_class == 0: FP += 1
-        elif predicted_class == 0 and actual_class == 1: FN += 1
-    accuracy = (TP + TN) / (TP + TN + FP + FN) if TP + TN + FP + FN else 0
-    precision = TP / (TP + FP) if (TP + FP) else 0
-    recall = TP / (TP + FN) if (TP + FN) else 0
+def compute_metrics(y_true, y_pred):
+    tp, tn, fp, fn = confusion_elements(y_true, y_pred)
+    accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
+    precision = tp / (tp + fp) if (tp + fp) else 0
+    recall = tp / (tp + fn) if (tp + fn) else 0
+    specificity = tn / (tn + fp) if (tn + fp) else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0
-    return TP, TN, FP, FN, accuracy, precision, recall, f1
+    return accuracy, specificity, precision, f1
 
-# === Fungsi Tambahan untuk Median dan Distribusi ===
-def hitung_median(data):
-    data_sorted = sorted(data)
-    n = len(data_sorted)
-    if n % 2 == 1:
-        return data_sorted[n // 2]
-    else:
-        return (data_sorted[n // 2 - 1] + data_sorted[n // 2]) / 2
+# ===================== Input Data Baru =====================
+def input_user_data(headers):
+    print("\nMasukkan data baru untuk prediksi:")
+    input_values = []
+    for feature in headers[:-1]:  # exclude label
+        while True:
+            try:
+                val = float(input(f"{feature}: "))
+                input_values.append(val)
+                break
+            except ValueError:
+                print("Input harus berupa angka.")
+    return input_values
 
-threshold_pred = hitung_median(predictions)
-print(f"Threshold berdasarkan median prediksi: {threshold_pred:.2f}")
-
-def print_distribusi_label(y_true, y_pred, threshold):
-    count_pos = sum(1 for v in y_true if v > threshold)
-    count_neg = sum(1 for v in y_true if v <= threshold)
-    pred_pos = sum(1 for v in y_pred if v > threshold)
-    pred_neg = sum(1 for v in y_pred if v <= threshold)
-    print(f"Distribusi Label Aktual > {threshold}: {count_pos}")
-    print(f"Distribusi Label Aktual <= {threshold}: {count_neg}")
-    print(f"Distribusi Prediksi > {threshold}: {pred_pos}")
-    print(f"Distribusi Prediksi <= {threshold}: {pred_neg}")
-
-# === Main ===
+# ===================== Main Program =====================
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python predict_billing_with_metrics.py <train_csv> <test_csv>")
-        return
+    train_data, headers = read_csv('train_data.csv')
+    test_data, _ = read_csv('test_data.csv')
 
-    train_file = sys.argv[1]
-    test_file = sys.argv[2]
-    threshold = 25000.0
+    # Training
+    separated_train = separate_by_class(train_data)
+    summaries = {cls: summarize_dataset(rows) for cls, rows in separated_train.items()}
 
-    # Load training data
-    X_train, y_train, _, _ = load_data(train_file)
+    # Evaluasi data latih dan uji
+    y_train_true = [int(row[-1]) for row in train_data]
+    y_test_true = [int(row[-1]) for row in test_data]
+    y_train_pred = get_predictions(summaries, separated_train, train_data)
+    y_test_pred = get_predictions(summaries, separated_train, test_data)
 
-    # Train model
-    theta = linear_regression_fit(X_train, y_train)
+    train_metrics = compute_metrics(y_train_true, y_train_pred)
+    test_metrics = compute_metrics(y_test_true, y_test_pred)
 
-    # Load test data
-    X_test, y_test, names_test, rows_test = load_data(test_file)
+    # Hitung confusion matrix untuk data latih
+    tp_train, tn_train, fp_train, fn_train = confusion_elements(y_train_true, y_train_pred)
 
-    # Predict
-    predictions = predict(X_test, theta)
+    # Hitung confusion matrix untuk data uji
+    tp_test, tn_test, fp_test, fn_test = confusion_elements(y_test_true, y_test_pred)
 
-    print(f"\n[INFO] Data uji: {len(y_test)} baris")
-    print(f"[INFO] Prediksi minimum: {min(predictions):.2f}")
-    print(f"[INFO] Prediksi maksimum: {max(predictions):.2f}")
-    print(f"[INFO] Prediksi di atas threshold {threshold}: {sum(1 for p in predictions if p > threshold)}")
+    # Tampilkan hasil evaluasi data latih dengan confusion matrix
+    print("=== Evaluasi Data Latih ===")
+    print(f"Accuracy    : {train_metrics[0]:.4f}")
+    print(f"Specificity : {train_metrics[1]:.4f}")
+    print(f"Precision   : {train_metrics[2]:.4f}")
+    print(f"F1-Score    : {train_metrics[3]:.4f}")
+    print(f"TP: {tp_train}, TN: {tn_train}, FP: {fp_train}, FN: {fn_train}")
 
-    print("\n=== Distribusi Label dan Prediksi dengan threshold default ===")
-    print_distribusi_label(y_test, predictions, threshold)
+    print("\n=== Evaluasi Data Uji ===")
+    print(f"Accuracy    : {test_metrics[0]:.4f}")
+    print(f"Specificity : {test_metrics[1]:.4f}")
+    print(f"Precision   : {test_metrics[2]:.4f}")
+    print(f"F1-Score    : {test_metrics[3]:.4f}")
+    print(f"TP: {tp_test}, TN: {tn_test}, FP: {fp_test}, FN: {fn_test}")
 
-    # Cek apakah ada label negatif, kalau tidak coba threshold median
-    count_neg = sum(1 for v in y_test if v <= threshold)
-    if count_neg == 0:
-        median_threshold = hitung_median(y_test)
-        print(f"\nTidak ada label <= {threshold}, coba threshold alternatif median: {median_threshold:.2f}")
-        print_distribusi_label(y_test, predictions, median_threshold)
-        threshold = median_threshold  # pakai threshold baru ini
+    # Input data baru dari user
+    new_data = input_user_data(headers)
+    prediction = predict(summaries, separated_train, new_data)
+    print(f"\n📊 Prediksi untuk data baru: task_success = {prediction} ({'BERHASIL' if prediction == 1 else 'GAGAL'})")
 
-    # Evaluasi dengan threshold yang sudah diperbaiki
-    TP, TN, FP, FN, acc, prec, rec, f1 = evaluate_classification(y_test, predictions, threshold)
+    # Hitung ulang prediksi dan metrik data uji tanpa menggunakan test_metrics lama
+    y_test_pred_new = get_predictions(summaries, separated_train, test_data)
+    test_metrics_new = compute_metrics(y_test_true, y_test_pred_new)
 
-    print("\nConfusion Matrix dan Metrik:")
-    print(f"TP: {TP} | TN: {TN} | FP: {FP} | FN: {FN}")
-    print(f"Akurasi: {acc:.2f}")
-    print(f"Presisi: {prec:.2f}")
-    print(f"Recall: {rec:.2f}")
-    print(f"F1 Score: {f1:.2f}")
+    print("\n=== Evaluasi Model pada Data Uji (Setelah Prediksi) ===")
+    print(f"Accuracy    : {test_metrics_new[0]:.4f}")
+    print(f"Specificity : {test_metrics_new[1]:.4f}")
+    print(f"Precision   : {test_metrics_new[2]:.4f}")
+    print(f"F1-Score    : {test_metrics_new[3]:.4f}")
 
-    # Save result
-    output_file = "billing_predictions_evaluated.csv"
-    with open(output_file, 'w', newline='') as file:
-        fieldnames = list(rows_test[0].keys()) + ['Predicted Billing', 'Actual Label', 'Predicted Label']
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        for row, actual, pred in zip(rows_test, y_test, predictions):
-            row['Predicted Billing'] = round(pred, 2)
-            row['Actual Label'] = 1 if actual > threshold else 0
-            row['Predicted Label'] = 1 if pred > threshold else 0
-            writer.writerow(row)
-
-    print(f"\n[INFO] Hasil prediksi dan evaluasi disimpan di {output_file}")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
