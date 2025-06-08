@@ -17,6 +17,28 @@ def read_csv(filename):
             data.append(features + [label])
         return data, header
 
+# ===================== Normalisasi =====================
+def normalize_dataset(dataset):
+    transposed = list(zip(*[row[:-1] for row in dataset]))
+    min_vals = [min(col) for col in transposed]
+    max_vals = [max(col) for col in transposed]
+
+    normalized = []
+    for row in dataset:
+        norm_row = [
+            (val - min_vals[i]) / (max_vals[i] - min_vals[i]) if max_vals[i] != min_vals[i] else 0
+            for i, val in enumerate(row[:-1])
+        ]
+        norm_row.append(row[-1])
+        normalized.append(norm_row)
+    return normalized, min_vals, max_vals
+
+def normalize_row(row, min_vals, max_vals):
+    return [
+        (val - min_vals[i]) / (max_vals[i] - min_vals[i]) if max_vals[i] != min_vals[i] else 0
+        for i, val in enumerate(row)
+    ]
+
 # ===================== Decision Tree Core =====================
 class Node:
     def __init__(self, feature=None, threshold=None, left=None, right=None, value=None):
@@ -77,7 +99,7 @@ def build_tree(dataset, max_depth, min_size, depth=1):
     split = get_best_split(dataset)
     if not split or depth >= max_depth:
         return Node(value=to_terminal(dataset))
-    
+
     left, right = split['groups']
     if len(left) == 0 or len(right) == 0:
         return Node(value=to_terminal(left + right))
@@ -141,28 +163,6 @@ def input_user_data(headers):
                 print("Input harus berupa angka.")
     return input_values
 
-# ===================== Evaluasi & Tampilkan Salah =====================
-def evaluate_and_print(name, data, tree, show_wrong=False):
-    y_true = [row[-1] for row in data]
-    y_pred = []
-    wrong_data = None
-    for row in data:
-        pred = predict_tree(tree, row[:-1])
-        y_pred.append(pred)
-        if show_wrong and pred != row[-1] and not wrong_data:
-            wrong_data = row
-    acc, spec, prec, f1, tp, tn, fp, fn = compute_metrics(y_true, y_pred)
-    print(f"\n=== Evaluasi Data {name} ===")
-    print(f"Accuracy    : {acc:.4f}")
-    print(f"Specificity : {spec:.4f}")
-    print(f"Precision   : {prec:.4f}")
-    print(f"F1-Score    : {f1:.4f}")
-    print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
-    if show_wrong and wrong_data:
-        print("\nContoh data TEST yang salah prediksi:")
-        print("Fitur :", wrong_data[:-1])
-        print("Prediksi:", predict_tree(tree, wrong_data[:-1]))
-
 # ===================== Main =====================
 def main():
     max_depth = 5
@@ -170,15 +170,44 @@ def main():
 
     train_data, headers = read_csv('train_data.csv')
     val_data, _ = read_csv('val_data.csv')
-    test_data, _ = read_csv('test_data.csv')
+    test_data, _ = read_csv('test_data.csv')  # data test tetap original
 
-    tree = build_tree(train_data, max_depth, min_size)
+    # Normalisasi data latih dan validasi
+    norm_train_data, min_vals, max_vals = normalize_dataset(train_data)
+    norm_val_data, _, _ = normalize_dataset(val_data)
 
-    evaluate_and_print("Train", train_data, tree)
-    evaluate_and_print("Test", test_data, tree, show_wrong=True)
+    # Buat decision tree dari data latih
+    tree = build_tree(norm_train_data, max_depth, min_size)
 
+    # Evaluasi Data Train
+    print("\n=== Evaluasi Data Train ===")
+    y_true_train = [row[-1] for row in norm_train_data]
+    y_pred_train = [predict_tree(tree, row[:-1]) for row in norm_train_data]
+    acc, spec, prec, f1, tp, tn, fp, fn = compute_metrics(y_true_train, y_pred_train)
+    print(f"Accuracy    : {acc:.4f}")
+    print(f"Specificity : {spec:.4f}")
+    print(f"Precision   : {prec:.4f}")
+    print(f"F1-Score    : {f1:.4f}")
+    print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
+
+    # Evaluasi Data Test
+    print("\n=== Evaluasi Data Test ===")
+    y_true_test = [row[-1] for row in test_data]
+    y_pred_test = []
+    for row in test_data:
+        norm_row = normalize_row(row[:-1], min_vals, max_vals)
+        pred = predict_tree(tree, norm_row)
+        y_pred_test.append(pred)
+    acc, spec, prec, f1, tp, tn, fp, fn = compute_metrics(y_true_test, y_pred_test)
+    print(f"Accuracy    : {acc:.4f}")
+    print(f"Specificity : {spec:.4f}")
+    print(f"Precision   : {prec:.4f}")
+    print(f"F1-Score    : {f1:.4f}")
+    print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
+
+    # Evaluasi Validasi (LOO-CV)
     print("\n=== Evaluasi Validasi (LOO-CV pada Validation Set) ===")
-    y_true_val, y_pred_val = loo_cross_validation(val_data, max_depth, min_size)
+    y_true_val, y_pred_val = loo_cross_validation(norm_val_data, max_depth, min_size)
     acc, spec, prec, f1, tp, tn, fp, fn = compute_metrics(y_true_val, y_pred_val)
     print(f"Accuracy    : {acc:.4f}")
     print(f"Specificity : {spec:.4f}")
@@ -186,11 +215,14 @@ def main():
     print(f"F1-Score    : {f1:.4f}")
     print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
 
+    # Prediksi data baru dari user
     new_data = input_user_data(headers)
-    prediction = predict_tree(tree, new_data)
+    norm_new_data = normalize_row(new_data, min_vals, max_vals)
+    prediction = predict_tree(tree, norm_new_data)
     print(f"\nPrediksi untuk data baru: {prediction} ({'BERHASIL' if prediction == 1 else 'GAGAL'})")
 
     print("\n=== Program Selesai ===")
+
 
 if __name__ == '__main__':
     main()
