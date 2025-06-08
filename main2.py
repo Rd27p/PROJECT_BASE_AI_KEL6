@@ -1,6 +1,3 @@
-import csv
-from collections import Counter
-
 # ===================== CSV Reader =====================
 def read_csv(filename):
     with open(filename, 'r') as file:
@@ -22,7 +19,7 @@ def read_csv(filename):
 
 # ===================== Decision Tree Core =====================
 class Node:
-    def __init__(self, feature=None, threshold=None, left=None, right=None, *, value=None):
+    def __init__(self, feature=None, threshold=None, left=None, right=None, value=None):
         self.feature = feature
         self.threshold = threshold
         self.left = left
@@ -42,7 +39,8 @@ def gini_index(groups, classes):
         score = 0.0
         labels = [row[-1] for row in group]
         for class_val in classes:
-            proportion = labels.count(class_val) / size
+            count = labels.count(class_val)
+            proportion = count / size
             score += proportion ** 2
         gini += (1.0 - score) * (size / n_instances)
     return gini
@@ -69,8 +67,11 @@ def get_best_split(dataset):
     return {'index': best_index, 'threshold': best_threshold, 'groups': best_groups}
 
 def to_terminal(group):
-    outcomes = [row[-1] for row in group]
-    return Counter(outcomes).most_common(1)[0][0]
+    counts = {}
+    for row in group:
+        label = row[-1]
+        counts[label] = counts.get(label, 0) + 1
+    return max(counts, key=counts.get)
 
 def build_tree(dataset, max_depth, min_size, depth=1):
     split = get_best_split(dataset)
@@ -106,14 +107,15 @@ def confusion_elements(y_true, y_pred):
 
 def compute_metrics(y_true, y_pred):
     tp, tn, fp, fn = confusion_elements(y_true, y_pred)
-    accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) else 0
+    total = tp + tn + fp + fn
+    accuracy = (tp + tn) / total if total else 0
     precision = tp / (tp + fp) if (tp + fp) else 0
     recall = tp / (tp + fn) if (tp + fn) else 0
     specificity = tn / (tn + fp) if (tn + fp) else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0
     return accuracy, specificity, precision, f1, tp, tn, fp, fn
 
-# ===================== Leave-One-Out Cross Validation =====================
+# ===================== LOO-CV =====================
 def loo_cross_validation(data, max_depth, min_size):
     y_true_all, y_pred_all = [], []
     for i in range(len(data)):
@@ -121,11 +123,11 @@ def loo_cross_validation(data, max_depth, min_size):
         test = data[i]
         tree = build_tree(train, max_depth, min_size)
         pred = predict_tree(tree, test[:-1])
-        y_true_all.append(int(test[-1]))
+        y_true_all.append(test[-1])
         y_pred_all.append(pred)
     return y_true_all, y_pred_all
 
-# ===================== Input Data Baru =====================
+# ===================== Input Manual =====================
 def input_user_data(headers):
     print("\nMasukkan data baru untuk prediksi:")
     input_values = []
@@ -139,10 +141,16 @@ def input_user_data(headers):
                 print("Input harus berupa angka.")
     return input_values
 
-# ===================== Evaluasi dan Cetak =====================
-def evaluate_and_print(name, data, tree):
-    y_true = [int(row[-1]) for row in data]
-    y_pred = [predict_tree(tree, row[:-1]) for row in data]
+# ===================== Evaluasi & Tampilkan Salah =====================
+def evaluate_and_print(name, data, tree, show_wrong=False):
+    y_true = [row[-1] for row in data]
+    y_pred = []
+    wrong_data = None
+    for row in data:
+        pred = predict_tree(tree, row[:-1])
+        y_pred.append(pred)
+        if show_wrong and pred != row[-1] and not wrong_data:
+            wrong_data = row
     acc, spec, prec, f1, tp, tn, fp, fn = compute_metrics(y_true, y_pred)
     print(f"\n=== Evaluasi Data {name} ===")
     print(f"Accuracy    : {acc:.4f}")
@@ -150,6 +158,10 @@ def evaluate_and_print(name, data, tree):
     print(f"Precision   : {prec:.4f}")
     print(f"F1-Score    : {f1:.4f}")
     print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
+    if show_wrong and wrong_data:
+        print("\nContoh data TEST yang salah prediksi:")
+        print("Fitur :", wrong_data[:-1])
+        print("Prediksi:", predict_tree(tree, wrong_data[:-1]))
 
 # ===================== Main =====================
 def main():
@@ -160,14 +172,11 @@ def main():
     val_data, _ = read_csv('val_data.csv')
     test_data, _ = read_csv('test_data.csv')
 
-    # Build tree dari data latih
     tree = build_tree(train_data, max_depth, min_size)
 
-    # Evaluasi
     evaluate_and_print("Train", train_data, tree)
-    evaluate_and_print("Test", test_data, tree)
+    evaluate_and_print("Test", test_data, tree, show_wrong=True)
 
-    # LOO-CV
     print("\n=== Evaluasi Validasi (LOO-CV pada Validation Set) ===")
     y_true_val, y_pred_val = loo_cross_validation(val_data, max_depth, min_size)
     acc, spec, prec, f1, tp, tn, fp, fn = compute_metrics(y_true_val, y_pred_val)
@@ -177,7 +186,6 @@ def main():
     print(f"F1-Score    : {f1:.4f}")
     print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
 
-    # Prediksi data baru
     new_data = input_user_data(headers)
     prediction = predict_tree(tree, new_data)
     print(f"\nPrediksi untuk data baru: {prediction} ({'BERHASIL' if prediction == 1 else 'GAGAL'})")
