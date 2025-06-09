@@ -219,7 +219,7 @@ def main():
     new_data = input_user_data(headers)
     norm_new_data = normalize_row(new_data, min_vals, max_vals)
     prediction = predict_tree(tree, norm_new_data)
-    print(f"\nPrediksi untuk data baru: {prediction} ({'BERHASIL' if prediction == 1 else 'GAGAL'})")
+    print(f"\nPrediksi untuk data baru: {prediction} ({'POSITIVE' if prediction == 1 else 'NEGATIVE'})")
 
     print("\n=== Program Selesai ===")
 
